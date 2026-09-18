@@ -1,5 +1,6 @@
 package com.spaceaudio.app.core.source.youtube
 
+import android.content.Context
 import com.spaceaudio.app.core.source.AudioMetadata
 import com.spaceaudio.app.core.source.AudioResult
 import com.spaceaudio.app.core.source.AudioSourceProvider
@@ -13,8 +14,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
@@ -22,6 +21,7 @@ import java.util.concurrent.TimeUnit
  * Extracts accurate metadata, duration down to the second, and audio streams up to 1 hour (3600s).
  */
 class YouTubeAudioSourceProvider(
+    private val context: Context? = null,
     private val httpClient: OkHttpClient = defaultHttpClient()
 ) : AudioSourceProvider {
 
@@ -177,110 +177,40 @@ class YouTubeAudioSourceProvider(
                 destinationDirectory.mkdirs()
             }
 
-            onProgress(
-                DownloadProgress(
-                    stage = DownloadStage.DOWNLOADING_AUDIO,
-                    progressPercent = 0.2f,
-                    message = "Resolving audio stream..."
-                )
-            )
-
-            // Extract direct audio stream from YouTube
-            val streamResult = YouTubeStreamExtractor.extractAudioStream(videoId)
-            val stream = streamResult.getOrElse { error ->
-                throw IllegalStateException("No se pudo obtener el audio de YouTube: ${error.message}")
-            }
-
-            if (stream.streamUrl.isBlank()) {
-                throw IllegalStateException("La URL del stream de audio obtenida está vacía.")
-            }
-
-            val ext = when {
-                stream.mimeType.contains("webm") -> "webm"
-                stream.mimeType.contains("mp4") || stream.mimeType.contains("m4a") -> "m4a"
-                else -> "mp3"
-            }
-            val filename = AudioMetadata.sanitizeFilename("${metadata.author} - $finalTitle.$ext")
-            val outputFile = File(destinationDirectory, filename)
-
-            val downloadRequest = Request.Builder()
-                .url(stream.streamUrl)
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
-                .header("Referer", "https://www.youtube.com/")
-                .header("Accept", "*/*")
-                .build()
-
-            httpClient.newCall(downloadRequest).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val reason = when (response.code) {
-                        403 -> "El enlace de audio fue rechazado o expiró (HTTP 403)."
-                        404 -> "El enlace de audio ya no existe (HTTP 404)."
-                        429 -> "El servidor de audio limitó las solicitudes (HTTP 429)."
-                        in 500..599 -> "El servidor de audio no está disponible (HTTP ${response.code})."
-                        else -> "El servidor de audio rechazó la descarga (HTTP ${response.code})."
-                    }
-                    throw IllegalStateException(reason)
-                }
-
-                val body = response.body ?: throw IllegalStateException("Cuerpo de respuesta vacío")
-                val totalBytes = body.contentLength()
-                var bytesRead = 0L
-
-                val inputStream: InputStream = body.byteStream()
-                val outputStream = FileOutputStream(outputFile)
-
-                outputStream.use { out ->
-                    val buffer = ByteArray(8192)
-                    var read: Int
-                    while (inputStream.read(buffer).also { read = it } != -1) {
-                        out.write(buffer, 0, read)
-                        bytesRead += read
-                        val percent = if (totalBytes > 0) (bytesRead.toFloat() / totalBytes.toFloat()) * 0.75f + 0.2f else 0.6f
-
-                        onProgress(
-                            DownloadProgress(
-                                stage = DownloadStage.DOWNLOADING_AUDIO,
-                                progressPercent = percent.coerceIn(0f, 0.95f),
-                                bytesRead = bytesRead,
-                                totalBytes = totalBytes,
-                                message = "Descargando pista de audio completa..."
-                            )
-                        )
-                    }
-                }
-            }
-
-            if (!outputFile.exists() || outputFile.length() == 0L) {
-                throw IllegalStateException("El archivo descargado está vacío o no se guardó correctamente.")
+            val downloaded = YtDlpAudioDownloader(
+                context ?: throw IllegalStateException("YouTube downloader requires an Android context")
+            ).download(
+                url = normalizeUrl(url),
+                customTitle = customTitle,
+                destinationDirectory = destinationDirectory,
+                onProgress = onProgress
+            ).getOrElse { error ->
+                throw IllegalStateException("No se pudo descargar y convertir el vídeo de YouTube: ${error.message}", error)
             }
 
             onProgress(
                 DownloadProgress(
                     stage = DownloadStage.SAVED_TO_DOWNLOADS,
                     progressPercent = 1.0f,
-                    bytesRead = outputFile.length(),
-                    totalBytes = outputFile.length(),
+                    bytesRead = downloaded.file.length(),
+                    totalBytes = downloaded.file.length(),
                     message = "Guardado en la carpeta de descargas"
                 )
             )
 
-            val resolvedDuration = when {
-                stream.durationMs > 0 -> stream.durationMs
-                metadata.durationMs > 0 -> metadata.durationMs
-                else -> 0L
-            }
-
             val finalMetadata = metadata.copy(
-                title = finalTitle,
-                durationMs = resolvedDuration
+                title = downloaded.title,
+                author = downloaded.author,
+                durationMs = downloaded.durationMs.takeIf { it > 0 } ?: metadata.durationMs,
+                mimeType = "audio/mpeg"
             )
 
             Result.success(
                 AudioResult(
-                    file = outputFile,
-                    mimeType = stream.mimeType,
-                    durationMs = resolvedDuration,
-                    sizeBytes = outputFile.length(),
+                    file = downloaded.file,
+                    mimeType = "audio/mpeg",
+                    durationMs = finalMetadata.durationMs,
+                    sizeBytes = downloaded.file.length(),
                     metadata = finalMetadata
                 )
             )

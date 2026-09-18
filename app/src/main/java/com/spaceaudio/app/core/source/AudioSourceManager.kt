@@ -1,7 +1,6 @@
 package com.spaceaudio.app.core.source
 
 import com.spaceaudio.app.core.source.direct.DirectAudioUrlSourceProvider
-import com.spaceaudio.app.core.source.youtube.YouTubeAudioSourceProvider
 import java.io.File
 
 /**
@@ -9,7 +8,6 @@ import java.io.File
  */
 class AudioSourceManager(
     private val providers: List<AudioSourceProvider> = listOf(
-        YouTubeAudioSourceProvider(),
         DirectAudioUrlSourceProvider()
     )
 ) {

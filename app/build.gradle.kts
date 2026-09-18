@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.ksp)
     alias(libs.plugins.compose.compiler)
+    id("com.chaquo.python")
 }
 
 android {
@@ -15,6 +16,10 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -48,6 +53,16 @@ android {
     }
 }
 
+chaquopy {
+    defaultConfig {
+        version = "3.14"
+        buildPython("C:/Users/nostraxiten/AppData/Local/Python/bin/python.exe")
+        pip {
+            install("yt-dlp==2026.8.19")
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -77,6 +92,7 @@ dependencies {
     // Networking
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
+    implementation(libs.ffmpeg.kit.audio)
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.core)

@@ -26,7 +26,7 @@ class AppContainer(private val context: Context) {
     val audioSourceManager: AudioSourceManager by lazy {
         AudioSourceManager(
             providers = listOf(
-                YouTubeAudioSourceProvider(),
+                YouTubeAudioSourceProvider(context),
                 DirectAudioUrlSourceProvider()
             )
         )
