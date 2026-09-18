@@ -18,14 +18,8 @@ data class PlayerState(
         get() = if (durationMs > 0) (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
 
     val hasNext: Boolean
-        get() = when (repeatMode) {
-            RepeatMode.ONE, RepeatMode.ALL -> queue.isNotEmpty()
-            RepeatMode.OFF -> currentIndex < queue.size - 1
-        }
+        get() = queue.isNotEmpty()
 
     val hasPrevious: Boolean
-        get() = when (repeatMode) {
-            RepeatMode.ONE, RepeatMode.ALL -> queue.isNotEmpty()
-            RepeatMode.OFF -> currentIndex > 0 || currentPositionMs > 3000
-        }
+        get() = queue.isNotEmpty()
 }

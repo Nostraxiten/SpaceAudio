@@ -1,7 +1,9 @@
 package com.spaceaudio.app.player
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -10,6 +12,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.spaceaudio.app.data.local.entity.TrackEntity
+import com.spaceaudio.app.player.service.MusicService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,6 +35,7 @@ class PlayerController(
     val playerState: StateFlow<PlayerState> = _playerState.asStateFlow()
 
     private var originalQueue: List<TrackEntity> = emptyList()
+    private val shuffleHistory = ArrayDeque<Int>()
     private var positionTickerJob: Job? = null
     var onTrackDurationDiscovered: ((trackId: Long, durationMs: Long) -> Unit)? = null
 
@@ -139,20 +143,13 @@ class PlayerController(
 
     fun playTrack(track: TrackEntity, trackList: List<TrackEntity> = listOf(track)) {
         originalQueue = trackList
-        val currentQueue = if (_playerState.value.isShuffleEnabled) {
-            val shuffled = trackList.filter { it.id != track.id }.shuffled().toMutableList()
-            shuffled.add(0, track)
-            shuffled
-        } else {
-            trackList
-        }
-
-        val targetIndex = currentQueue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+        shuffleHistory.clear()
+        val targetIndex = trackList.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
 
         _playerState.update {
             it.copy(
                 currentTrack = track,
-                queue = currentQueue,
+                queue = trackList,
                 currentIndex = targetIndex,
                 durationMs = track.durationMs
             )
@@ -168,16 +165,23 @@ class PlayerController(
             return
         }
 
-        val mediaMetadata = MediaMetadata.Builder()
+        val mediaMetadataBuilder = MediaMetadata.Builder()
             .setTitle(track.title)
             .setArtist(track.artist)
             .setAlbumTitle(track.album)
-            .build()
+
+        if (!track.thumbnailUri.isNullOrBlank()) {
+            try {
+                mediaMetadataBuilder.setArtworkUri(Uri.parse(track.thumbnailUri))
+            } catch (e: Exception) {
+                Log.w("PlayerController", "Could not parse artwork URI: ${track.thumbnailUri}")
+            }
+        }
 
         val uri = Uri.fromFile(file)
         val mediaItem = MediaItem.Builder()
             .setUri(uri)
-            .setMediaMetadata(mediaMetadata)
+            .setMediaMetadata(mediaMetadataBuilder.build())
             .build()
 
         exoPlayer.stop()
@@ -185,6 +189,14 @@ class PlayerController(
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
         exoPlayer.play()
+
+        // Ensure background / lock-screen notification service is running
+        try {
+            val serviceIntent = Intent(context, MusicService::class.java)
+            context.startService(serviceIntent)
+        } catch (e: Exception) {
+            Log.w("PlayerController", "Could not start MusicService: ${e.message}")
+        }
     }
 
     fun togglePlayPause() {
@@ -217,11 +229,27 @@ class PlayerController(
         val state = _playerState.value
         if (state.queue.isEmpty()) return
 
-        val nextIndex = when (state.repeatMode) {
-            RepeatMode.ONE -> state.currentIndex
-            RepeatMode.ALL -> (state.currentIndex + 1) % state.queue.size
-            RepeatMode.OFF -> {
-                if (state.currentIndex < state.queue.size - 1) state.currentIndex + 1 else return
+        if (state.queue.size == 1) {
+            seekTo(0)
+            play()
+            return
+        }
+
+        val nextIndex = if (state.isShuffleEnabled) {
+            // Push current index to history for going back
+            if (state.currentIndex in state.queue.indices) {
+                shuffleHistory.addLast(state.currentIndex)
+                if (shuffleHistory.size > 100) shuffleHistory.removeFirst()
+            }
+            // Pick randomly excluding current track
+            val candidates = state.queue.indices.filter { it != state.currentIndex }
+            if (candidates.isNotEmpty()) candidates.random() else 0
+        } else {
+            if (state.repeatMode == RepeatMode.ONE) {
+                state.currentIndex
+            } else {
+                // Infinite sequential loop
+                (state.currentIndex + 1) % state.queue.size
             }
         }
 
@@ -238,10 +266,26 @@ class PlayerController(
         }
         if (state.queue.isEmpty()) return
 
-        val prevIndex = when (state.repeatMode) {
-            RepeatMode.ONE -> state.currentIndex
-            RepeatMode.ALL -> if (state.currentIndex > 0) state.currentIndex - 1 else state.queue.size - 1
-            RepeatMode.OFF -> if (state.currentIndex > 0) state.currentIndex - 1 else 0
+        if (state.queue.size == 1) {
+            seekTo(0)
+            play()
+            return
+        }
+
+        val prevIndex = if (state.isShuffleEnabled) {
+            if (shuffleHistory.isNotEmpty()) {
+                shuffleHistory.removeLast()
+            } else {
+                val candidates = state.queue.indices.filter { it != state.currentIndex }
+                if (candidates.isNotEmpty()) candidates.random() else 0
+            }
+        } else {
+            if (state.repeatMode == RepeatMode.ONE) {
+                state.currentIndex
+            } else {
+                // Infinite backward loop
+                if (state.currentIndex > 0) state.currentIndex - 1 else state.queue.size - 1
+            }
         }
 
         val prevTrack = state.queue.getOrNull(prevIndex) ?: return
@@ -251,28 +295,9 @@ class PlayerController(
 
     fun toggleShuffle() {
         val newState = !_playerState.value.isShuffleEnabled
-        val currentTrack = _playerState.value.currentTrack
-
-        val newQueue = if (newState) {
-            if (currentTrack != null) {
-                val rest = originalQueue.filter { it.id != currentTrack.id }.shuffled().toMutableList()
-                rest.add(0, currentTrack)
-                rest
-            } else {
-                originalQueue.shuffled()
-            }
-        } else {
-            originalQueue
-        }
-
-        val newIndex = currentTrack?.let { track -> newQueue.indexOfFirst { it.id == track.id } } ?: 0
-
+        shuffleHistory.clear()
         _playerState.update {
-            it.copy(
-                isShuffleEnabled = newState,
-                queue = newQueue,
-                currentIndex = newIndex.coerceAtLeast(0)
-            )
+            it.copy(isShuffleEnabled = newState)
         }
     }
 
@@ -339,9 +364,11 @@ class PlayerController(
             }
             RepeatMode.ALL -> skipToNext()
             RepeatMode.OFF -> {
-                if (_playerState.value.hasNext) {
+                val state = _playerState.value
+                if (state.isShuffleEnabled || state.currentIndex < state.queue.size - 1) {
                     skipToNext()
                 } else {
+                    _playerState.update { it.copy(currentIndex = 0, currentTrack = it.queue.firstOrNull()) }
                     pause()
                     seekTo(0)
                 }

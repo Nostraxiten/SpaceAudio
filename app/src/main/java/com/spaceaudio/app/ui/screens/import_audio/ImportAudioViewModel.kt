@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.spaceaudio.app.core.source.AudioMetadata
 import com.spaceaudio.app.core.source.DownloadProgress
 import com.spaceaudio.app.core.source.DownloadStage
+import com.spaceaudio.app.core.source.youtube.YouTubeUrlParser
 import com.spaceaudio.app.data.local.entity.TrackEntity
 import com.spaceaudio.app.data.repository.AudioRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,7 @@ data class ImportUiState(
     val isAnalyzing: Boolean = false,
     val previewMetadata: AudioMetadata? = null,
     val customTitle: String = "",
+    val customArtist: String = "",
     val selectedFolder: String = "Downloads",
     val downloadProgress: DownloadProgress? = null,
     val isDownloading: Boolean = false,
@@ -36,13 +38,19 @@ class ImportAudioViewModel(
 
     fun onUrlChanged(newUrl: String) {
         val trimmed = newUrl.trim()
-        val isYouTube = trimmed.contains("youtube.com") || trimmed.contains("youtu.be")
-        val isDirect = trimmed.endsWith(".mp3") || trimmed.endsWith(".m4a") || trimmed.endsWith(".aac")
+        val videoId = YouTubeUrlParser.extractVideoId(trimmed)
+        val isYouTube = videoId != null
+        val isDirect = !isYouTube && (
+            trimmed.endsWith(".mp3") || trimmed.endsWith(".m4a") ||
+            trimmed.endsWith(".aac") || trimmed.endsWith(".ogg")
+        )
+        val isHttp = trimmed.startsWith("http://") || trimmed.startsWith("https://")
+
         val providerName = when {
             isYouTube -> "YouTube"
-            isDirect -> "Direct Audio"
-            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> "Web Audio Source"
-            else -> null
+            isDirect  -> "Direct Audio"
+            isHttp    -> "Web Audio"
+            else      -> null
         }
 
         _uiState.update {
@@ -55,6 +63,11 @@ class ImportAudioViewModel(
                 importedTrack = null
             )
         }
+
+        // Auto-analyze when a valid YouTube link is pasted
+        if (isYouTube && trimmed.isNotBlank()) {
+            analyzeUrl()
+        }
     }
 
     fun analyzeUrl() {
@@ -62,7 +75,7 @@ class ImportAudioViewModel(
         if (url.isBlank()) return
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isAnalyzing = true, errorMessage = null) }
+            _uiState.update { it.copy(isAnalyzing = true, errorMessage = null, previewMetadata = null) }
             val result = audioRepository.analyzeUrl(url)
             result.onSuccess { metadata ->
                 _uiState.update {
@@ -70,6 +83,7 @@ class ImportAudioViewModel(
                         isAnalyzing = false,
                         previewMetadata = metadata,
                         customTitle = metadata.title,
+                        customArtist = metadata.author,
                         errorMessage = null
                     )
                 }
@@ -77,7 +91,7 @@ class ImportAudioViewModel(
                 _uiState.update {
                     it.copy(
                         isAnalyzing = false,
-                        errorMessage = error.message ?: "Unsupported source"
+                        errorMessage = error.message ?: "Could not fetch track info. Check the URL and try again."
                     )
                 }
             }
@@ -88,6 +102,10 @@ class ImportAudioViewModel(
         _uiState.update { it.copy(customTitle = newTitle) }
     }
 
+    fun onCustomArtistChanged(newArtist: String) {
+        _uiState.update { it.copy(customArtist = newArtist) }
+    }
+
     fun onFolderChanged(folder: String) {
         _uiState.update { it.copy(selectedFolder = folder) }
     }
@@ -96,6 +114,9 @@ class ImportAudioViewModel(
         val state = _uiState.value
         val url = state.urlInput.trim()
         if (url.isBlank()) return
+
+        // Use custom title if provided; fall back to analyzed metadata title
+        val effectiveTitle = state.customTitle.takeIf { it.isNotBlank() }
 
         viewModelScope.launch {
             _uiState.update {
@@ -108,7 +129,7 @@ class ImportAudioViewModel(
 
             val result = audioRepository.importAudio(
                 url = url,
-                customTitle = state.customTitle.takeIf { it.isNotBlank() },
+                customTitle = effectiveTitle,
                 targetFolder = state.selectedFolder,
                 onProgress = { progress ->
                     _uiState.update { it.copy(downloadProgress = progress) }
@@ -120,6 +141,7 @@ class ImportAudioViewModel(
                     it.copy(
                         isDownloading = false,
                         importedTrack = track,
+                        downloadProgress = null,
                         errorMessage = null
                     )
                 }
@@ -129,7 +151,7 @@ class ImportAudioViewModel(
                     it.copy(
                         isDownloading = false,
                         downloadProgress = null,
-                        errorMessage = error.message ?: "Failed to import audio"
+                        errorMessage = error.message ?: "Failed to import audio. Please try again."
                     )
                 }
             }
@@ -139,4 +161,10 @@ class ImportAudioViewModel(
     fun clearImport() {
         _uiState.update { ImportUiState() }
     }
+
+    fun dismissError() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
 }
+
+
