@@ -39,6 +39,11 @@ object YouTubeStreamExtractor {
         .followSslRedirects(true)
         .build()
 
+    private val streamProbeClient = httpClient.newBuilder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .build()
+
     // Invidious public instances – ordered by reliability
     private val invidiousInstances = listOf(
         "https://inv.nadeko.net/api/v1",
@@ -131,7 +136,7 @@ object YouTubeStreamExtractor {
                             }
                         }
 
-                        if (bestUrl.isNotBlank()) {
+                        if (bestUrl.isNotBlank() && isStreamAvailable(bestUrl)) {
                             Log.d(TAG, "✅ Strategy 1 (Invidious/$instance): $bestMime ${durationMs}ms")
                             return@withContext Result.success(
                                 ExtractedAudioStream(bestUrl, bestMime, maxBitrate, durationMs)
@@ -178,6 +183,7 @@ object YouTubeStreamExtractor {
 
                         if (directUrl.isNotBlank() &&
                             status in setOf("tunnel", "redirect", "stream", "success", "picker")
+                            && isStreamAvailable(directUrl)
                         ) {
                             Log.d(TAG, "✅ Strategy 2 (Cobalt/$cobaltBase): status=$status")
                             return@withContext Result.success(
@@ -228,7 +234,7 @@ object YouTubeStreamExtractor {
                             }
                         }
 
-                        if (bestUrl.isNotBlank()) {
+                        if (bestUrl.isNotBlank() && isStreamAvailable(bestUrl)) {
                             Log.d(TAG, "✅ Strategy 3 (Piped/$instance): $bestMime ${durationMs}ms")
                             return@withContext Result.success(
                                 ExtractedAudioStream(bestUrl, bestMime, maxBitrate, durationMs)
@@ -303,7 +309,7 @@ object YouTubeStreamExtractor {
                             }
                         }
 
-                        if (bestStream != null) {
+                        if (bestStream != null && isStreamAvailable(bestStream.streamUrl)) {
                             Log.d(TAG, "✅ Strategy 4 (Android Innertube): ${bestStream.mimeType} ${bestStream.durationMs}ms")
                             return@withContext Result.success(bestStream)
                         }
@@ -322,4 +328,22 @@ object YouTubeStreamExtractor {
                 )
             )
         }
+
+    private fun isStreamAvailable(streamUrl: String): Boolean {
+        return try {
+            val request = Request.Builder()
+                .url(streamUrl)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) SpaceAudio/1.0")
+                .header("Referer", "https://www.youtube.com/")
+                .header("Range", "bytes=0-1")
+                .build()
+
+            streamProbeClient.newCall(request).execute().use { response ->
+                response.code in 200..299
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Stream probe failed: ${e.message}")
+            false
+        }
+    }
 }

@@ -212,7 +212,14 @@ class YouTubeAudioSourceProvider(
 
             httpClient.newCall(downloadRequest).execute().use { response ->
                 if (!response.isSuccessful) {
-                    throw IllegalStateException("Error al descargar el flujo de audio: HTTP ${response.code}")
+                    val reason = when (response.code) {
+                        403 -> "El enlace de audio fue rechazado o expiró (HTTP 403)."
+                        404 -> "El enlace de audio ya no existe (HTTP 404)."
+                        429 -> "El servidor de audio limitó las solicitudes (HTTP 429)."
+                        in 500..599 -> "El servidor de audio no está disponible (HTTP ${response.code})."
+                        else -> "El servidor de audio rechazó la descarga (HTTP ${response.code})."
+                    }
+                    throw IllegalStateException(reason)
                 }
 
                 val body = response.body ?: throw IllegalStateException("Cuerpo de respuesta vacío")
