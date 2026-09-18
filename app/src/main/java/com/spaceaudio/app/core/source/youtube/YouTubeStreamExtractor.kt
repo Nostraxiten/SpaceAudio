@@ -29,6 +29,7 @@ data class ExtractedAudioStream(
 object YouTubeStreamExtractor {
 
     private const val TAG = "YouTubeStreamExtractor"
+    private const val INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
     const val MAX_ALLOWED_DURATION_MS = 3600 * 1000L // 1 hour max
 
     private val httpClient = OkHttpClient.Builder()
@@ -240,7 +241,7 @@ object YouTubeStreamExtractor {
             }
 
             // ────────────────────────────────────────────────────────
-            // STRATEGY 4: YouTube Innertube — iOS Client
+            // STRATEGY 4: YouTube Innertube — Android Client
             //   Last resort: direct call to YouTube Innertube API.
             //   Only use plain `url` fields (no `signatureCipher`) to
             //   avoid n-parameter throttling.
@@ -248,13 +249,13 @@ object YouTubeStreamExtractor {
             try {
                 val payload = JSONObject().apply {
                     put("videoId", videoId)
+                    put("contentCheckOk", true)
+                    put("racyCheckOk", true)
                     put("context", JSONObject().apply {
                         put("client", JSONObject().apply {
-                            put("clientName", "IOS")
-                            put("clientVersion", "19.29.1")
-                            put("deviceModel", "iPhone16,2")
-                            put("osName", "iOS")
-                            put("osVersion", "17.5.1.21F90")
+                            put("clientName", "ANDROID")
+                            put("clientVersion", "20.10.38")
+                            put("androidSdkVersion", 35)
                             put("hl", "en")
                             put("gl", "US")
                         })
@@ -262,11 +263,11 @@ object YouTubeStreamExtractor {
                 }
 
                 val req = Request.Builder()
-                    .url("https://www.youtube.com/youtubei/v1/player")
+                    .url("https://www.youtube.com/youtubei/v1/player?key=$INNERTUBE_API_KEY")
                     .post(payload.toString().toRequestBody("application/json".toMediaType()))
-                    .header("User-Agent", "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)")
-                    .header("X-YouTube-Client-Name", "5")
-                    .header("X-YouTube-Client-Version", "19.29.1")
+                    .header("User-Agent", "com.google.android.youtube/20.10.38 (Linux; U; Android 15; US) gzip")
+                    .header("X-YouTube-Client-Name", "3")
+                    .header("X-YouTube-Client-Version", "20.10.38")
                     .build()
 
                 httpClient.newCall(req).execute().use { response ->
@@ -303,7 +304,7 @@ object YouTubeStreamExtractor {
                         }
 
                         if (bestStream != null) {
-                            Log.d(TAG, "✅ Strategy 4 (iOS Innertube): ${bestStream.mimeType} ${bestStream.durationMs}ms")
+                            Log.d(TAG, "✅ Strategy 4 (Android Innertube): ${bestStream.mimeType} ${bestStream.durationMs}ms")
                             return@withContext Result.success(bestStream)
                         }
                     }

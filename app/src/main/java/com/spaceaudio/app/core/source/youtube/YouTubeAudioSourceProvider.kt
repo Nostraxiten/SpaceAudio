@@ -46,11 +46,13 @@ class YouTubeAudioSourceProvider(
         try {
             val jsonPayload = JSONObject().apply {
                 put("videoId", videoId)
+                put("contentCheckOk", true)
+                put("racyCheckOk", true)
                 put("context", JSONObject().apply {
                     put("client", JSONObject().apply {
                         put("clientName", "ANDROID")
-                        put("clientVersion", "19.09.37")
-                        put("androidSdkVersion", 34)
+                        put("clientVersion", "20.10.38")
+                        put("androidSdkVersion", 35)
                         put("hl", "en")
                         put("gl", "US")
                     })
@@ -58,11 +60,11 @@ class YouTubeAudioSourceProvider(
             }
 
             val request = Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player")
+                .url("https://www.youtube.com/youtubei/v1/player?key=$INNERTUBE_API_KEY")
                 .post(jsonPayload.toString().toRequestBody("application/json".toMediaType()))
-                .header("User-Agent", "com.google.android.youtube/19.09.37 (Linux; U; Android 14; US) gzip")
+                .header("User-Agent", "com.google.android.youtube/20.10.38 (Linux; U; Android 15; US) gzip")
                 .header("X-YouTube-Client-Name", "3")
-                .header("X-YouTube-Client-Version", "19.09.37")
+                .header("X-YouTube-Client-Version", "20.10.38")
                 .build()
 
             httpClient.newCall(request).execute().use { response ->
@@ -288,6 +290,8 @@ class YouTubeAudioSourceProvider(
     }
 
     companion object {
+        private const val INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+
         private fun defaultHttpClient(): OkHttpClient {
             return OkHttpClient.Builder()
                 .connectTimeout(15, TimeUnit.SECONDS)
