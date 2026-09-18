@@ -1,4 +1,4 @@
-# SpaceAudio 🚀🎧
+# SpaceAudio 
 
 Modern, offline-first Android music player with modular audio source import (YouTube, Direct Audio URLs), Room local persistence, and Jetpack Compose cosmic design.
 
